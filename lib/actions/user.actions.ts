@@ -25,15 +25,27 @@ export const getUserInfo = async ({ userId }: getUserInfoProps) => {
   try {
     const { database } = await createAdminClient();
 
+    console.log(
+      `Looking for user with userId: ${userId} in collection: ${USER_COLLECTION_ID}`
+    );
+
     const user = await database.listDocuments(
       DATABASE_ID!,
       USER_COLLECTION_ID!,
       [Query.equal("userId", [userId])]
     );
 
-    return parseStringify(user.documents[0]);
+    console.log("User query results:", user);
+
+    if (user.total === 0 || !user.documents[0]) {
+      console.error(`User not found in database. Total matches: ${user.total}`);
+      return null;
+    }
+
+    return user.documents[0];
   } catch (error) {
-    console.log(error);
+    console.error("Error in getUserInfo:", error);
+    return null;
   }
 };
 
@@ -42,91 +54,133 @@ export const signIn = async ({ email, password }: signInProps) => {
     const { account } = await createAdminClient();
     const session = await account.createEmailPasswordSession(email, password);
 
+    console.log("Session created with userId:", session.userId);
+
     cookies().set("appwrite-session", session.secret, {
       path: "/",
       httpOnly: true,
-      sameSite: "strict",
-      secure: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
     });
 
     const user = await getUserInfo({ userId: session.userId });
 
+    if (!user) {
+      // Check if user exists directly by ID as fallback
+      console.log("Trying fallback user lookup...");
+      const { database } = await createAdminClient();
+      const userDoc = await database.getDocument(
+        DATABASE_ID!,
+        USER_COLLECTION_ID!,
+        session.userId
+      );
+
+      if (userDoc) {
+        console.log("Found user via direct ID lookup");
+        return parseStringify(userDoc);
+      }
+
+      throw new Error("User exists but couldn't be retrieved");
+    }
+
     return parseStringify(user);
   } catch (error) {
-    console.error("Error", error);
+    console.error("SignIn error:", error);
+    return null;
   }
 };
 
 export const signUp = async ({ password, ...userData }: SignUpParams) => {
   const { email, firstName, lastName } = userData;
 
-  let newUserAccount;
-
   try {
+    // 1. Create Auth account first
     const { account, database } = await createAdminClient();
-
-    newUserAccount = await account.create(
+    const newUserAccount = await account.create(
       ID.unique(),
       email,
       password,
       `${firstName} ${lastName}`
     );
 
-    if (!newUserAccount) throw new Error("Error creating user");
+    if (!newUserAccount) throw new Error("Failed to create auth account");
 
+    console.log("Auth account created with ID:", newUserAccount.$id);
+
+    // 2. Create Dwolla customer
     const dwollaCustomerUrl = await createDwollaCustomer({
       ...userData,
       type: "personal",
     });
 
-    if (!dwollaCustomerUrl) throw new Error("Error creating Dwolla customer");
+    if (!dwollaCustomerUrl) throw new Error("Failed to create Dwolla customer");
 
     const dwollaCustomerId = extractCustomerIdFromUrl(dwollaCustomerUrl);
+    console.log("Dwolla customer created:", dwollaCustomerId);
 
+    // 3. Create database document
     const newUser = await database.createDocument(
       DATABASE_ID!,
       USER_COLLECTION_ID!,
-      ID.unique(),
+      newUserAccount.$id, // Using auth account ID as document ID
       {
         ...userData,
         userId: newUserAccount.$id,
         dwollaCustomerId,
         dwollaCustomerUrl,
+        email, // Ensure email is included
       }
     );
 
+    console.log("Database document created:", newUser);
+
+    // 4. Create session
     const session = await account.createEmailPasswordSession(email, password);
 
     cookies().set("appwrite-session", session.secret, {
       path: "/",
       httpOnly: true,
-      sameSite: "strict",
-      secure: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
     });
 
     return parseStringify(newUser);
   } catch (error) {
-    console.error("Error", error);
+    if (error && typeof error === "object") {
+      console.error("SignUp error details:", {
+        message: (error as any).message,
+        code: (error as any).code,
+        type: (error as any).type,
+        response: (error as any).response,
+      });
+    } else {
+      console.error("SignUp error details:", error);
+    }
+    throw error; // Re-throw to handle in UI
   }
 };
 
 export async function getLoggedInUser() {
   try {
-    const { account } = await createSessionClient();
-    const result = await account.get();
+    const sessionClient = await createSessionClient();
+    if (!sessionClient) return null;
+
+    const result = await sessionClient.account.get();
+    if (!result?.$id) return null;
 
     const user = await getUserInfo({ userId: result.$id });
-
     return parseStringify(user);
   } catch (error) {
-    console.log(error);
+    console.error("Error getting logged in user:", error);
     return null;
   }
 }
 
 export const logoutAccount = async () => {
   try {
-    const { account } = await createSessionClient();
+    const sessionClient = await createSessionClient();
+    if (!sessionClient) return null;
+    const { account } = sessionClient;
 
     cookies().delete("appwrite-session");
 

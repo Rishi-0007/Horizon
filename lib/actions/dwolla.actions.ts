@@ -55,13 +55,69 @@ export const createDwollaCustomer = async (
   newCustomer: NewDwollaCustomerParams
 ) => {
   try {
-    return await dwollaClient
-      .post("customers", newCustomer)
-      .then((res) => res.headers.get("location"));
+    // Format dateOfBirth to YYYY-MM-DD
+    const formattedDateOfBirth = formatDateForDwolla(newCustomer.dateOfBirth);
+
+    // Validate and format postal code
+    const formattedPostalCode = formatPostalCodeForDwolla(
+      newCustomer.postalCode
+    );
+
+    const dwollaCustomerData = {
+      ...newCustomer,
+      dateOfBirth: formattedDateOfBirth,
+      postalCode: formattedPostalCode,
+    };
+
+    console.log("Creating Dwolla customer with:", dwollaCustomerData);
+
+    const response = await dwollaClient.post("customers", dwollaCustomerData);
+    return response.headers.get("location");
   } catch (err) {
-    console.error("Creating a Dwolla Customer Failed: ", err);
+    console.error(
+      "Creating a Dwolla Customer Failed: ",
+      JSON.stringify(err, null, 2)
+    );
+    const errorMessage =
+      typeof err === "object" && err !== null
+        ? (err as any).body?.message || (err as any).message
+        : String(err);
+    throw new Error(`Dwolla customer creation failed: ${errorMessage}`);
   }
 };
+
+// Helper functions
+function formatDateForDwolla(dateString: string): string {
+  // Ensure date is in YYYY-MM-DD format
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) {
+    throw new Error(`Invalid date format: ${dateString}`);
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatPostalCodeForDwolla(postalCode: string): string {
+  // Remove any non-digit characters and ensure proper length
+  const cleaned = postalCode.replace(/\D/g, "");
+
+  // Basic validation for US ZIP codes (5 digits or 5-4 format)
+  if (
+    !/^\d{5}(-\d{4})?$/.test(cleaned) &&
+    cleaned.length !== 5 &&
+    cleaned.length !== 9
+  ) {
+    throw new Error(`Invalid US postal code format: ${postalCode}`);
+  }
+
+  return cleaned.length > 5
+    ? `${cleaned.slice(0, 5)}-${cleaned.slice(5)}`
+    : cleaned;
+}
 
 export const createTransfer = async ({
   sourceFundingSourceUrl,
