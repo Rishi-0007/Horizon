@@ -9,53 +9,69 @@ const {
   APPWRITE_TRANSACTION_COLLECTION_ID: TRANSACTION_COLLECTION_ID,
 } = process.env;
 
-export const createTransaction = async (transaction: CreateTransactionProps) => {
+export const createTransaction = async (
+  transaction: CreateTransactionProps
+) => {
   try {
     const { database } = await createAdminClient();
+
+    // Validate required fields
+    if (!transaction.userId) {
+      throw new Error("userId is required");
+    }
 
     const newTransaction = await database.createDocument(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
       ID.unique(),
       {
-        channel: 'online',
-        category: 'Transfer',
-        ...transaction
+        name: transaction.name,
+        amount: Number(transaction.amount),
+        senderBankId: transaction.senderBankId,
+        receiverBankId: transaction.receiverBankId,
+        userId: transaction.userId,
+        type: transaction.type || "debit", // default to debit
+        category: transaction.category || "Transfer",
+        channel: transaction.channel || "online",
+        date: transaction.date || new Date().toISOString(),
+        $permissions: [
+          `read("user:${transaction.userId}")`,
+          `write("user:${transaction.userId}")`,
+        ],
       }
-    )
+    );
 
     return parseStringify(newTransaction);
   } catch (error) {
-    console.log(error);
+    console.error("Error creating transaction:", {
+      message: error instanceof Error ? error.message : String(error),
+      transaction,
+    });
+    throw error;
   }
-}
+};
 
-export const getTransactionsByBankId = async ({bankId}: getTransactionsByBankIdProps) => {
+export const getTransactionsByBankId = async ({
+  bankId,
+}: getTransactionsByBankIdProps) => {
   try {
     const { database } = await createAdminClient();
 
-    const senderTransactions = await database.listDocuments(
+    const transactions = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
-      [Query.equal('senderBankId', bankId)],
-    )
-
-    const receiverTransactions = await database.listDocuments(
-      DATABASE_ID!,
-      TRANSACTION_COLLECTION_ID!,
-      [Query.equal('receiverBankId', bankId)],
-    );
-
-    const transactions = {
-      total: senderTransactions.total + receiverTransactions.total,
-      documents: [
-        ...senderTransactions.documents, 
-        ...receiverTransactions.documents,
+      [
+        Query.or([
+          Query.equal("senderBankId", bankId),
+          Query.equal("receiverBankId", bankId),
+        ]),
+        Query.orderDesc("$createdAt"),
       ]
-    }
+    );
 
     return parseStringify(transactions);
   } catch (error) {
-    console.log(error);
+    console.error("Error getting transactions:", error);
+    return parseStringify({ total: 0, documents: [] });
   }
-}
+};

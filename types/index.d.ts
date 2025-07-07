@@ -65,7 +65,7 @@ declare type Account = {
 
 declare type Transaction = {
   id: string;
-  $id: string;
+  $id?: string;
   name: string;
   paymentChannel: string;
   type: string;
@@ -74,12 +74,12 @@ declare type Transaction = {
   pending: boolean;
   category: string;
   date: string;
-  image: string;
-  type: string;
-  $createdAt: string;
+  image?: string | null;
+  $createdAt?: string;
   channel: string;
-  senderBankId: string;
-  receiverBankId: string;
+  senderBankId?: string;
+  receiverBankId?: string;
+  userId?: string;
 };
 
 declare type Bank = {
@@ -90,6 +90,8 @@ declare type Bank = {
   fundingSourceUrl: string;
   userId: string;
   shareableId: string;
+  institutionId?: string;
+  status?: string;
 };
 
 declare type AccountTypes =
@@ -211,7 +213,7 @@ declare interface TotalBalanceBoxProps {
 
 declare interface FooterProps {
   user: User;
-  type?: 'mobile' | 'desktop'
+  type?: "mobile" | "desktop";
 }
 
 declare interface RightSidebarProps {
@@ -282,12 +284,17 @@ declare interface CreateFundingSourceOptions {
 
 declare interface CreateTransactionProps {
   name: string;
-  amount: string;
+  amount: float;
   senderId: string;
   senderBankId: string;
   receiverId: string;
   receiverBankId: string;
-  email: string;
+  userId?: string;
+  email?: string;
+  type?: "debit" | "credit" | undefined;
+  category?: string;
+  channel?: string;
+  date?: string;
 }
 
 declare interface getTransactionsByBankIdProps {
