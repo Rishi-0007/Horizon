@@ -221,6 +221,14 @@ export const createBankAccount = async ({
   try {
     const { database } = await createAdminClient();
 
+    console.log("Creating bank account with:", {
+      userId,
+      bankId,
+      accountId,
+      fundingSourceUrl,
+      shareableId,
+    });
+
     const bankAccount = await database.createDocument(
       DATABASE_ID!,
       BANK_COLLECTION_ID!,
@@ -235,9 +243,24 @@ export const createBankAccount = async ({
       }
     );
 
+    console.log("Bank account created successfully:", bankAccount);
     return parseStringify(bankAccount);
   } catch (error) {
-    console.log(error);
+    console.error("Error creating bank account:", {
+      message:
+        typeof error === "object" && error !== null && "message" in error
+          ? (error as { message?: string }).message
+          : String(error),
+      code:
+        typeof error === "object" && error !== null && "code" in error
+          ? (error as { code?: string }).code
+          : undefined,
+      type:
+        typeof error === "object" && error !== null && "type" in error
+          ? (error as { type?: string }).type
+          : undefined,
+    });
+    return null;
   }
 };
 
@@ -246,7 +269,7 @@ export const exchangePublicToken = async ({
   user,
 }: exchangePublicTokenProps) => {
   try {
-    // Exchange public token for access token and item ID
+    // 1. Exchange public token
     const response = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
@@ -254,37 +277,33 @@ export const exchangePublicToken = async ({
     const accessToken = response.data.access_token;
     const itemId = response.data.item_id;
 
-    // Get account information from Plaid using the access token
+    // 2. Get account info
     const accountsResponse = await plaidClient.accountsGet({
       access_token: accessToken,
     });
-
     const accountData = accountsResponse.data.accounts[0];
 
-    // Create a processor token for Dwolla using the access token and account ID
-    const request: ProcessorTokenCreateRequest = {
+    // 3. Create processor token
+    const processorTokenResponse = await plaidClient.processorTokenCreate({
       access_token: accessToken,
       account_id: accountData.account_id,
       processor: "dwolla" as ProcessorTokenCreateRequestProcessorEnum,
-    };
-
-    const processorTokenResponse = await plaidClient.processorTokenCreate(
-      request
-    );
+    });
     const processorToken = processorTokenResponse.data.processor_token;
 
-    // Create a funding source URL for the account using the Dwolla customer ID, processor token, and bank name
+    // 4. Add funding source
     const fundingSourceUrl = await addFundingSource({
       dwollaCustomerId: user.dwollaCustomerId,
       processorToken,
       bankName: accountData.name,
     });
 
-    // If the funding source URL is not created, throw an error
-    if (!fundingSourceUrl) throw Error;
+    if (!fundingSourceUrl) {
+      throw new Error("Failed to create funding source");
+    }
 
-    // Create a bank account using the user ID, item ID, account ID, access token, funding source URL, and shareableId ID
-    await createBankAccount({
+    // 5. Create bank account record
+    const bankAccount = await createBankAccount({
       userId: user.$id,
       bankId: itemId,
       accountId: accountData.account_id,
@@ -293,15 +312,31 @@ export const exchangePublicToken = async ({
       shareableId: encryptId(accountData.account_id),
     });
 
-    // Revalidate the path to reflect the changes
-    revalidatePath("/");
+    if (!bankAccount) {
+      throw new Error("Failed to create bank account record");
+    }
 
-    // Return a success message
-    return parseStringify({
-      publicTokenExchange: "complete",
-    });
+    revalidatePath("/");
+    return parseStringify({ publicTokenExchange: "complete" });
   } catch (error) {
-    console.error("An error occurred while creating exchanging token:", error);
+    console.error("Error in exchangePublicToken:", {
+      message:
+        typeof error === "object" && error !== null && "message" in error
+          ? (error as { message?: string }).message
+          : String(error),
+      stack:
+        typeof error === "object" && error !== null && "stack" in error
+          ? (error as { stack?: string }).stack
+          : undefined,
+      response:
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error &&
+        (error as any).response?.data
+          ? (error as any).response.data
+          : undefined,
+    });
+    throw error;
   }
 };
 
@@ -350,9 +385,15 @@ export const getBankByAccountId = async ({
     );
 
     if (bank.total !== 1) return null;
-
     return parseStringify(bank.documents[0]);
   } catch (error) {
-    console.log(error);
+    console.error("Error getting bank by account ID:", {
+      accountId,
+      error:
+        typeof error === "object" && error !== null && "message" in error
+          ? (error as { message?: string }).message
+          : String(error),
+    });
+    return null;
   }
 };
