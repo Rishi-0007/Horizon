@@ -197,32 +197,7 @@ export const createLinkToken = async (user: User) => {
         client_user_id: user.$id,
       },
       client_name: `${user.firstName} ${user.lastName}`,
-      products: [
-        "assets",
-        "auth",
-        "balance",
-        "identity",
-        "identity_match",
-        "investments",
-        "investments_auth",
-        "liabilities",
-        "payment_initiation",
-        "identity_verification",
-        "transactions",
-        "credit_details",
-        "income",
-        "income_verification",
-        "deposit_switch",
-        "standing_orders",
-        "transfer",
-        "employment",
-        "recurring_transactions",
-        "signal",
-        "statements",
-        "processor_payments",
-        "processor_identity",
-        "profile",
-      ] as Products[],
+      products: ["auth", "identity", "transactions"] as Products[],
       language: "en",
       country_codes: ["US"] as CountryCode[],
     };
@@ -232,6 +207,33 @@ export const createLinkToken = async (user: User) => {
     return parseStringify({ linkToken: response.data.link_token });
   } catch (error) {
     console.log(error);
+  }
+};
+
+export const createUpdateModeLinkToken = async ({
+  accessToken,
+  user,
+}: {
+  accessToken: string;
+  user: User;
+}) => {
+  try {
+    const tokenParams = {
+      access_token: accessToken,
+      user: {
+        client_user_id: user.$id,
+      },
+      client_name: `${user.firstName} ${user.lastName}`,
+      products: ["transactions"] as Products[],
+      language: "en",
+      country_codes: ["US"] as CountryCode[],
+    };
+
+    const response = await plaidClient.linkTokenCreate(tokenParams);
+    return parseStringify({ linkToken: response.data.link_token });
+  } catch (error) {
+    console.error("Error creating update mode link token:", error);
+    throw error;
   }
 };
 
@@ -294,6 +296,11 @@ export const exchangePublicToken = async ({
   user,
 }: exchangePublicTokenProps) => {
   try {
+    // Validate inputs
+    if (!publicToken || !user?.dwollaCustomerId) {
+      throw new Error("Missing required parameters");
+    }
+
     // 1. Exchange public token
     const response = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
@@ -306,25 +313,49 @@ export const exchangePublicToken = async ({
     const accountsResponse = await plaidClient.accountsGet({
       access_token: accessToken,
     });
+
+    if (!accountsResponse.data.accounts?.[0]) {
+      throw new Error("No accounts found");
+    }
+
     const accountData = accountsResponse.data.accounts[0];
 
     // 3. Create processor token
     const processorTokenResponse = await plaidClient.processorTokenCreate({
       access_token: accessToken,
       account_id: accountData.account_id,
-      processor: "dwolla" as ProcessorTokenCreateRequestProcessorEnum,
+      processor: ProcessorTokenCreateRequestProcessorEnum.Dwolla,
     });
-    const processorToken = processorTokenResponse.data.processor_token;
 
-    // 4. Add funding source
-    const fundingSourceUrl = await addFundingSource({
-      dwollaCustomerId: user.dwollaCustomerId,
-      processorToken,
-      bankName: accountData.name,
-    });
+    const processorToken = processorTokenResponse.data.processor_token;
+    if (!processorToken) {
+      throw new Error("Failed to create processor token");
+    }
+
+    // 4. Add funding source with retry logic
+    let fundingSourceUrl;
+    try {
+      fundingSourceUrl = await addFundingSource({
+        dwollaCustomerId: user.dwollaCustomerId,
+        processorToken,
+        bankName: accountData.name,
+      });
+    } catch (error) {
+      console.error(
+        "Initial funding source creation failed, retrying...",
+        error
+      );
+      // Add delay before retry
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      fundingSourceUrl = await addFundingSource({
+        dwollaCustomerId: user.dwollaCustomerId,
+        processorToken,
+        bankName: accountData.name,
+      });
+    }
 
     if (!fundingSourceUrl) {
-      throw new Error("Failed to create funding source");
+      throw new Error("Failed to create funding source after retry");
     }
 
     // 5. Create bank account record
@@ -342,24 +373,15 @@ export const exchangePublicToken = async ({
     }
 
     revalidatePath("/");
-    return parseStringify({ publicTokenExchange: "complete" });
+    return parseStringify({
+      publicTokenExchange: "complete",
+      bankAccountId: bankAccount.$id,
+    });
   } catch (error) {
-    console.error("Error in exchangePublicToken:", {
-      message:
-        typeof error === "object" && error !== null && "message" in error
-          ? (error as { message?: string }).message
-          : String(error),
-      stack:
-        typeof error === "object" && error !== null && "stack" in error
-          ? (error as { stack?: string }).stack
-          : undefined,
-      response:
-        typeof error === "object" &&
-        error !== null &&
-        "response" in error &&
-        (error as any).response?.data
-          ? (error as any).response.data
-          : undefined,
+    console.error("Detailed exchangePublicToken error:", {
+      message: (error as Error)?.message,
+      stack: (error as Error)?.stack,
+      userId: user?.$id,
     });
     throw error;
   }

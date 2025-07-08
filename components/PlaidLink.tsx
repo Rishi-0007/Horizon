@@ -8,24 +8,32 @@ import {
 import { useRouter } from "next/navigation";
 import {
   createLinkToken,
+  createUpdateModeLinkToken,
   exchangePublicToken,
 } from "@/lib/actions/user.actions";
 import Image from "next/image";
 
-const PlaidLink = ({ user, variant }: PlaidLinkProps) => {
+const PlaidLink = ({
+  user,
+  variant,
+  mode = "connect",
+  accessToken,
+}: PlaidLinkProps & { mode?: "connect" | "update"; accessToken?: string }) => {
   const router = useRouter();
-
   const [token, setToken] = useState("");
 
   useEffect(() => {
     const getLinkToken = async () => {
-      const data = await createLinkToken(user);
+      const data =
+        mode === "update"
+          ? await createUpdateModeLinkToken({ accessToken: accessToken!, user })
+          : await createLinkToken(user);
 
       setToken(data?.linkToken);
     };
 
     getLinkToken();
-  }, [user]);
+  }, [user, mode, accessToken]);
 
   const onSuccess = useCallback<PlaidLinkOnSuccess>(
     async (public_token: string) => {
@@ -34,9 +42,10 @@ const PlaidLink = ({ user, variant }: PlaidLinkProps) => {
         user,
       });
 
-      router.push("/");
+      // Refresh the current page to reload bank & errorCode
+      router.refresh();
     },
-    [user]
+    [router, user]
   );
 
   const config: PlaidLinkOptions = {

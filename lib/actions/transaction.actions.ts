@@ -14,9 +14,14 @@ export const createTransaction = async (
 ) => {
   try {
     const { database } = await createAdminClient();
+    const extractId = (entity: any) =>
+      typeof entity === "string" ? entity : entity?.$id;
 
-    // Validate required fields
-    if (!transaction.userId) {
+    const senderId = extractId(transaction.senderId);
+    const receiverId = extractId(transaction.receiverId);
+    const userId = extractId(transaction.userId);
+
+    if (!userId) {
       throw new Error("userId is required");
     }
 
@@ -27,17 +32,20 @@ export const createTransaction = async (
       {
         name: transaction.name,
         amount: Number(transaction.amount),
+        senderId,
         senderBankId: transaction.senderBankId,
+        receiverId,
         receiverBankId: transaction.receiverBankId,
-        userId: transaction.userId,
-        type: transaction.type || "debit", // default to debit
-        category: transaction.category || "Transfer",
-        channel: transaction.channel || "online",
+        userId,
+        type: transaction.type,
+        category: transaction.category,
+        channel: transaction.channel,
         date: transaction.date || new Date().toISOString(),
-        $permissions: [
-          `read("user:${transaction.userId}")`,
-          `write("user:${transaction.userId}")`,
-        ],
+        merchant: transaction.merchant,
+        logoUrl: transaction.logoUrl,
+        website: transaction.website,
+        plaidTransactionId: transaction.plaidTransactionId,
+        $permissions: [`read("user:${userId}")`, `write("user:${userId}")`],
       }
     );
 
@@ -57,17 +65,22 @@ export const getTransactionsByBankId = async ({
   try {
     const { database } = await createAdminClient();
 
-    const transactions = await database.listDocuments(
+    const senderTransactions = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
-      [
-        Query.or([
-          Query.equal("senderBankId", bankId),
-          Query.equal("receiverBankId", bankId),
-        ]),
-        Query.orderDesc("$createdAt"),
-      ]
+      [Query.equal("senderBankId", bankId)]
     );
+
+    const receiverTransactions = await database.listDocuments(
+      DATABASE_ID!,
+      TRANSACTION_COLLECTION_ID!,
+      [Query.equal("receiverBankId", bankId)]
+    );
+
+    const transactions = [
+      ...senderTransactions.documents,
+      ...receiverTransactions.documents,
+    ];
 
     return parseStringify(transactions);
   } catch (error) {

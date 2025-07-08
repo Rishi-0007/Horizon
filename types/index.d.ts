@@ -75,6 +75,10 @@ declare type Transaction = {
   category: string;
   date: string;
   image?: string | null;
+  logoUrl?: string | null;
+  website?: string | null;
+  merchant?: string;
+  plaidTransactionId?: string;
   $createdAt?: string;
   channel: string;
   senderBankId?: string;
@@ -178,6 +182,8 @@ declare interface PaginationProps {
 declare interface PlaidLinkProps {
   user: User;
   variant?: "primary" | "ghost";
+  mode?: "update" | "connect";
+  accessToken?: string;
   dwollaCustomerId?: string;
 }
 
@@ -230,7 +236,10 @@ declare interface RecentTransactionsProps {
   accounts: Account[];
   transactions: Transaction[];
   appwriteItemId: string;
-  page: number;
+  page?: number;
+  needsConsentUpdate?: boolean;
+  accessToken?: string;
+  user: User;
 }
 
 declare interface TransactionHistoryTableProps {
@@ -284,17 +293,20 @@ declare interface CreateFundingSourceOptions {
 
 declare interface CreateTransactionProps {
   name: string;
-  amount: float;
+  amount: number;
   senderId: string;
   senderBankId: string;
   receiverId: string;
   receiverBankId: string;
-  userId?: string;
-  email?: string;
-  type?: "debit" | "credit" | undefined;
+  userId: string;
+  type?: "debit" | "credit";
   category?: string;
   channel?: string;
-  date?: string;
+  date: string;
+  merchant?: string;
+  logoUrl?: string;
+  website?: string;
+  plaidTransactionId?: string;
 }
 
 declare interface getTransactionsByBankIdProps {

@@ -1,17 +1,8 @@
 "use server";
 
-import {
-  ACHClass,
-  CountryCode,
-  TransferAuthorizationCreateRequest,
-  TransferCreateRequest,
-  TransferNetwork,
-  TransferType,
-} from "plaid";
-
+import { CountryCode } from "plaid";
 import { plaidClient } from "../plaid";
 import { parseStringify } from "../utils";
-
 import {
   createTransaction,
   getTransactionsByBankId,
@@ -21,7 +12,6 @@ import { getBanks, getBank } from "./user.actions";
 // Get multiple bank accounts
 export const getAccounts = async ({ userId }: getAccountsProps) => {
   try {
-    // Get banks from db with error handling
     const banks = await getBanks({ userId });
     if (!banks || banks.length === 0) {
       return parseStringify({
@@ -34,7 +24,6 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
     const accounts = await Promise.all(
       banks.map(async (bank: Bank) => {
         try {
-          // Get account info from Plaid
           const accountsResponse = await plaidClient.accountsGet({
             access_token: bank.accessToken,
           });
@@ -45,7 +34,6 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
             return null;
           }
 
-          // Get institution info
           const institution = await getInstitution({
             institutionId: accountsResponse.data.item.institution_id!,
           });
@@ -65,7 +53,7 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
           };
         } catch (error) {
           console.error(`Error processing bank ${bank.$id}:`, {
-            message: error.message,
+            message: error instanceof Error ? error.message : String(error),
             bankId: bank.$id,
           });
           return null;
@@ -73,11 +61,10 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
       })
     );
 
-    // Filter out failed accounts
-    const validAccounts = accounts.filter((account) => account !== null);
+    const validAccounts = accounts.filter((acc) => acc !== null);
     const totalBanks = validAccounts.length;
     const totalCurrentBalance = validAccounts.reduce(
-      (total, account) => total + (account?.currentBalance || 0),
+      (sum, acc) => sum + (acc?.currentBalance || 0),
       0
     );
 
@@ -87,76 +74,35 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
       totalCurrentBalance,
     });
   } catch (error) {
-    console.error("Error in getAccounts:", {
-      message: error.message,
-      userId,
-    });
+    console.error("Error in getAccounts:", error);
     return parseStringify({ data: [], totalBanks: 0, totalCurrentBalance: 0 });
   }
 };
 
 // Get one bank account
 export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
+  let accessToken: string | undefined;
+  let errorCode: string | null = null;
+  let account: any = null;
+  let allTransactions: any[] = [];
+
   try {
     const bank = await getBank({ documentId: appwriteItemId });
-    if (!bank) throw new Error("Bank not found");
+    if (!bank) throw new Error(`Bank not found: ${appwriteItemId}`);
+    accessToken = bank.accessToken;
+    if (!accessToken) throw new Error("No access token found for bank");
 
-    // 1. Get account info
-    const accountsResponse = await plaidClient.accountsGet({
-      access_token: bank.accessToken,
+    // 1. Fetch account details
+    const { data: accountsData } = await plaidClient.accountsGet({
+      access_token: accessToken,
     });
-    const accountData = accountsResponse.data.accounts[0];
+    const accountData = accountsData.accounts?.[0];
+    if (!accountData) throw new Error("No account data returned from Plaid");
 
-    // 2. Get Plaid transactions
-    const plaidTransactions = await getTransactions({
-      accessToken: bank.accessToken,
-    });
-
-    // 3. Store Plaid transactions in Appwrite
-    const storedTransactions = await Promise.all(
-      plaidTransactions.map(async (t) => {
-        try {
-          return await createTransaction({
-            name: t.name,
-            amount: t.amount,
-            senderBankId: t.type === "debit" ? bank.$id : undefined,
-            receiverBankId: t.type === "credit" ? bank.$id : undefined,
-            userId: bank.userId,
-            type: t.type,
-            category: t.category,
-            channel: t.channel,
-            date: t.date,
-          });
-        } catch (e: unknown) {
-          console.error("Error storing transaction:", e);
-          return null;
-        }
-      })
-    );
-
-    // 4. Get internal transfers
-    const transferTransactionsData = await getTransactionsByBankId({
-      bankId: bank.$id,
-    });
-
-    const transferTransactions = transferTransactionsData.documents.map(
-      (t: Transaction) => ({
-        id: t.$id,
-        name: t.name || "Transfer",
-        amount: t.amount || 0,
-        date: t.date || t.$createdAt,
-        paymentChannel: t.channel || "transfer",
-        category: t.category || "Transfer",
-        type: t.type || (t.senderBankId === bank.$id ? "debit" : "credit"),
-      })
-    );
-
-    // 5. Get institution info
     const institution = await getInstitution({
-      institutionId: accountsResponse.data.item.institution_id!,
+      institutionId: accountsData.item.institution_id!,
     });
-
-    const account = {
+    account = {
       id: accountData.account_id,
       availableBalance: accountData.balances.available!,
       currentBalance: accountData.balances.current!,
@@ -164,29 +110,97 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
       name: accountData.name,
       officialName: accountData.official_name,
       mask: accountData.mask!,
-      type: accountData.type as string,
-      subtype: accountData.subtype! as string,
+      type: accountData.type,
+      subtype: accountData.subtype!,
       appwriteItemId: bank.$id,
     };
 
-    // 6. Merge transactions (both stored and new)
-    const allTransactions = [
-      ...storedTransactions.filter((t) => t !== null),
-      ...transferTransactions,
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // 2. Fetch Plaid transactions, capturing consent error
+    let plaidTransactions: any[] = [];
+    try {
+      plaidTransactions = await getTransactions({ accessToken });
+    } catch (err: any) {
+      const code = err?.response?.data?.error_code;
+      if (code) {
+        console.warn("Plaid consent error code:", code);
+        errorCode = code;
+      } else {
+        console.error("Unexpected Plaid error:", err);
+      }
+      plaidTransactions = [];
+    }
+
+    // 3. Store new transactions with rich metadata
+    const stored = await Promise.all(
+      plaidTransactions.map(async (t) =>
+        createTransaction({
+          name: t.name,
+          amount: Math.abs(t.amount),
+          senderBankId: t.amount < 0 ? bank.$id : bank.$id,
+          receiverBankId: t.amount >= 0 ? bank.$id : bank.$id,
+          userId: bank.userId,
+          type: t.amount < 0 ? "debit" : "credit",
+          category: await mapPlaidCategory(
+            t.personal_finance_category?.primary
+          ),
+          channel: t.paymentChannel || "other",
+          date: t.date,
+          senderId: bank.userId,
+          receiverId: bank.userId,
+          merchant: t.merchant_name || t.name,
+          logoUrl: t.image,
+          website: t.website,
+          plaidTransactionId: t.id,
+        }).catch((e) => {
+          console.error("Error storing transaction:", e);
+          return null;
+        })
+      )
+    );
+
+    // 4. Fetch internal transfers with proper error handling
+    let transferTxns: any[] = [];
+    try {
+      const transferData = await getTransactionsByBankId({ bankId: bank.$id });
+      transferTxns =
+        transferData?.documents?.map((t: any) => ({
+          id: t.$id,
+          name: t.name || "Transfer",
+          amount: t.amount!,
+          date: t.date || t.$createdAt,
+          paymentChannel: t.channel || "transfer",
+          category: t.category || "Transfer",
+          type: t.type || (t.senderBankId === bank.$id ? "debit" : "credit"),
+        })) || [];
+    } catch (error) {
+      console.error("Error fetching transfer transactions:", error);
+      transferTxns = [];
+    }
+
+    // 5. Combine, sort
+    allTransactions = [...stored.filter(Boolean), ...transferTxns].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
 
     return parseStringify({
       data: account,
       transactions: allTransactions,
+      accessToken,
+      errorCode,
       status: "complete",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in getAccount:", {
       appwriteItemId,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      message: error.message,
     });
-    return null;
+    return parseStringify({
+      data: account,
+      transactions: [],
+      accessToken,
+      errorCode,
+      status: "error",
+    });
   }
 };
 
@@ -200,11 +214,13 @@ export const getInstitution = async ({
       country_codes: ["US"] as CountryCode[],
     });
 
-    const intitution = institutionResponse.data.institution;
-
-    return parseStringify(intitution);
+    return parseStringify(institutionResponse.data.institution);
   } catch (error) {
-    console.error("An error occurred while getting the accounts:", error);
+    console.error("Error in getInstitution:", error);
+    return parseStringify({
+      institution_id: institutionId,
+      name: "Unknown Institution",
+    });
   }
 };
 
@@ -212,65 +228,54 @@ export const getInstitution = async ({
 export const getTransactions = async ({
   accessToken,
 }: getTransactionsProps) => {
-  let transactions: Transaction[] = [];
-  try {
-    let hasMore = true;
-    let cursor = undefined;
+  let hasMore = true;
+  let transactions: any = [];
 
+  try {
     while (hasMore) {
       const response = await plaidClient.transactionsSync({
         access_token: accessToken,
-        cursor: cursor,
       });
+      const data = response.data;
 
-      console.log("Plaid response:", {
-        added: response.data.added.length,
-        modified: response.data.modified.length,
-        removed: response.data.removed.length,
-        has_more: response.data.has_more,
-      });
+      transactions = response.data.added.map((transaction) => ({
+        id: transaction.transaction_id,
+        name: transaction.name,
+        paymentChannel: transaction.payment_channel,
+        type: transaction.payment_channel,
+        accountId: transaction.account_id,
+        amount: transaction.amount,
+        pending: transaction.pending,
+        personal_finance_category: transaction.personal_finance_category,
+        merchant_name: transaction.merchant_name,
+        image: transaction.logo_url,
+        website: transaction.website,
+        date: transaction.date,
+      }));
 
-      transactions = [
-        ...transactions,
-        ...response.data.added.map((t) => ({
-          id: t.transaction_id,
-          name: t.name,
-          amount: t.amount,
-          date: t.date,
-          paymentChannel: t.payment_channel,
-          category: t.category?.[0] || "",
-          pending: t.pending,
-          type: t.payment_channel,
-          accountId: t.account_id,
-          image: t.logo_url ?? undefined,
-          channel: t.payment_channel,
-        })),
-      ];
-
-      hasMore = response.data.has_more;
-      cursor = response.data.next_cursor;
+      hasMore = data.has_more;
     }
 
-    console.log("Total transactions fetched:", transactions.length);
-    return transactions;
+    return parseStringify(transactions);
   } catch (error) {
-    console.error("Detailed Plaid error:", {
-      message: error instanceof Error ? error.message : String(error),
-      response:
-        typeof error === "object" &&
-        error !== null &&
-        "response" in error &&
-        (error as any).response?.data
-          ? (error as any).response.data
-          : undefined,
-      status:
-        typeof error === "object" &&
-        error !== null &&
-        "response" in error &&
-        (error as any).response?.status
-          ? (error as any).response.status
-          : undefined,
-    });
-    return [];
+    console.error("An error occurred while getting transactions:", error);
+    throw error;
   }
 };
+
+// Helper: map Plaid's PFC to app categories
+export async function mapPlaidCategory(pfc?: string): Promise<string> {
+  const map: Record<string, string> = {
+    FOOD_AND_DRINK: "Food and Drink",
+    TRAVEL: "Travel",
+    TRANSPORTATION: "Travel",
+    GENERAL_MERCHANDISE: "Shopping",
+    LOAN_PAYMENTS: "Payment",
+    PAYMENTS: "Payment",
+    OUTGOING_TRANSFERS: "Transfer",
+    BANK_FEES: "Bank Fees",
+    INCOME: "Success", // e.g. interest, wages
+    // you can add more if you encounter new `primary` codes
+  };
+  return pfc && map[pfc] ? map[pfc] : "Uncategorized";
+}
