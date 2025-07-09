@@ -2,7 +2,7 @@
 
 import { ID, Query } from "node-appwrite";
 import { createAdminClient } from "../appwrite";
-import { parseStringify } from "../utils";
+import { generateTransactionFingerprint, parseStringify } from "../utils";
 
 const {
   APPWRITE_DATABASE_ID: DATABASE_ID,
@@ -25,6 +25,30 @@ export const createTransaction = async (
       throw new Error("userId is required");
     }
 
+    // ✅ Step 1: Generate fingerprint
+    const fingerprint =
+      transaction.fingerprint ||
+      generateTransactionFingerprint({
+        amount: transaction.amount,
+        date: transaction.date || new Date().toISOString(),
+        merchant: transaction.merchant || "",
+        userId,
+        senderBankId: transaction.senderBankId,
+      });
+
+    // ✅ Step 2: Check for existing transaction
+    const existing = await database.listDocuments(
+      DATABASE_ID!,
+      TRANSACTION_COLLECTION_ID!,
+      [Query.equal("fingerprint", fingerprint)]
+    );
+
+    if (existing.total > 0) {
+      console.log("Duplicate transaction skipped:", fingerprint);
+      return null; // or return existing.documents[0]
+    }
+
+    // ✅ Step 3: Proceed to create transaction
     const newTransaction = await database.createDocument(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
@@ -43,8 +67,8 @@ export const createTransaction = async (
         date: transaction.date || new Date().toISOString(),
         merchant: transaction.merchant,
         logoUrl: transaction.logoUrl,
-        website: transaction.website,
         plaidTransactionId: transaction.plaidTransactionId,
+        fingerprint,
         $permissions: [`read("user:${userId}")`, `write("user:${userId}")`],
       }
     );
@@ -86,5 +110,43 @@ export const getTransactionsByBankId = async ({
   } catch (error) {
     console.error("Error getting transactions:", error);
     return parseStringify({ total: 0, documents: [] });
+  }
+};
+
+export const getAllUserTransactions = async ({
+  userId,
+}: {
+  userId: string;
+}) => {
+  try {
+    const { database } = await createAdminClient();
+
+    const senderTransactions = await database.listDocuments(
+      DATABASE_ID!,
+      TRANSACTION_COLLECTION_ID!,
+      [Query.equal("senderId", userId)]
+    );
+
+    const receiverTransactions = await database.listDocuments(
+      DATABASE_ID!,
+      TRANSACTION_COLLECTION_ID!,
+      [Query.equal("receiverId", userId)]
+    );
+
+    const all = [
+      ...senderTransactions.documents,
+      ...receiverTransactions.documents,
+    ];
+
+    return parseStringify(
+      all.sort(
+        (a, b) =>
+          new Date((a as { date?: string }).date ?? 0).getTime() -
+          new Date((b as { date?: string }).date ?? 0).getTime()
+      )
+    );
+  } catch (error) {
+    console.error("Error in getAllUserTransactions:", error);
+    return [];
   }
 };

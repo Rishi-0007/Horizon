@@ -126,7 +126,8 @@ declare type TransferParams = {
 
 declare type AddFundingSourceParams = {
   dwollaCustomerId: string;
-  processorToken: string;
+  publicToken?: string;
+  processorToken?: string;
   bankName: string;
 };
 
@@ -293,12 +294,13 @@ declare interface CreateFundingSourceOptions {
 
 declare interface CreateTransactionProps {
   name: string;
-  amount: number;
+  amount: number | string;
   senderId: string;
   senderBankId: string;
   receiverId: string;
   receiverBankId: string;
   userId: string;
+  email?: string;
   type?: "debit" | "credit";
   category?: string;
   channel?: string;
@@ -307,6 +309,7 @@ declare interface CreateTransactionProps {
   logoUrl?: string;
   website?: string;
   plaidTransactionId?: string;
+  fingerprint?: string;
 }
 
 declare interface getTransactionsByBankIdProps {
@@ -346,4 +349,12 @@ declare interface getBankProps {
 
 declare interface getBankByAccountIdProps {
   accountId: string;
+}
+
+declare interface FingerprintProps {
+  amount: number | string;
+  date: string;
+  merchant: string;
+  userId: string;
+  senderBankId?: string;
 }

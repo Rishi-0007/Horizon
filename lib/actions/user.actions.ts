@@ -296,12 +296,7 @@ export const exchangePublicToken = async ({
   user,
 }: exchangePublicTokenProps) => {
   try {
-    // Validate inputs
-    if (!publicToken || !user?.dwollaCustomerId) {
-      throw new Error("Missing required parameters");
-    }
-
-    // 1. Exchange public token
+    // Exchange public token for access token and item ID
     const response = await plaidClient.itemPublicTokenExchange({
       public_token: publicToken,
     });
@@ -309,81 +304,54 @@ export const exchangePublicToken = async ({
     const accessToken = response.data.access_token;
     const itemId = response.data.item_id;
 
-    // 2. Get account info
+    // Get account information from Plaid using the access token
     const accountsResponse = await plaidClient.accountsGet({
       access_token: accessToken,
     });
 
-    if (!accountsResponse.data.accounts?.[0]) {
-      throw new Error("No accounts found");
-    }
-
     const accountData = accountsResponse.data.accounts[0];
 
-    // 3. Create processor token
-    const processorTokenResponse = await plaidClient.processorTokenCreate({
+    // Create a processor token for Dwolla using the access token and account ID
+    const request: ProcessorTokenCreateRequest = {
       access_token: accessToken,
       account_id: accountData.account_id,
-      processor: ProcessorTokenCreateRequestProcessorEnum.Dwolla,
+      processor: "dwolla" as ProcessorTokenCreateRequestProcessorEnum,
+    };
+
+    const processorTokenResponse = await plaidClient.processorTokenCreate(
+      request
+    );
+    const processorToken = processorTokenResponse.data.processor_token;
+
+    // Create a funding source URL for the account using the Dwolla customer ID, processor token, and bank name
+    const fundingSourceUrl = await addFundingSource({
+      dwollaCustomerId: user.dwollaCustomerId,
+      processorToken,
+      bankName: accountData.name,
     });
 
-    const processorToken = processorTokenResponse.data.processor_token;
-    if (!processorToken) {
-      throw new Error("Failed to create processor token");
-    }
+    // If the funding source URL is not created, throw an error
+    if (!fundingSourceUrl) throw Error;
 
-    // 4. Add funding source with retry logic
-    let fundingSourceUrl;
-    try {
-      fundingSourceUrl = await addFundingSource({
-        dwollaCustomerId: user.dwollaCustomerId,
-        processorToken,
-        bankName: accountData.name,
-      });
-    } catch (error) {
-      console.error(
-        "Initial funding source creation failed, retrying...",
-        error
-      );
-      // Add delay before retry
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      fundingSourceUrl = await addFundingSource({
-        dwollaCustomerId: user.dwollaCustomerId,
-        processorToken,
-        bankName: accountData.name,
-      });
-    }
-
-    if (!fundingSourceUrl) {
-      throw new Error("Failed to create funding source after retry");
-    }
-
-    // 5. Create bank account record
-    const bankAccount = await createBankAccount({
+    // Create a bank account using the user ID, item ID, account ID, access token, funding source URL, and shareableId ID
+    await createBankAccount({
       userId: user.$id,
       bankId: itemId,
       accountId: accountData.account_id,
       accessToken,
       fundingSourceUrl,
-      shareableId: accountData.account_id,
+      shareableId: encryptId(accountData.account_id),
     });
 
-    if (!bankAccount) {
-      throw new Error("Failed to create bank account record");
-    }
-
+    // Revalidate the path to reflect the changes
     revalidatePath("/");
+
+    // Return a success message
     return parseStringify({
       publicTokenExchange: "complete",
-      bankAccountId: bankAccount.$id,
     });
   } catch (error) {
-    console.error("Detailed exchangePublicToken error:", {
-      message: (error as Error)?.message,
-      stack: (error as Error)?.stack,
-      userId: user?.$id,
-    });
-    throw error;
+    console.error("An error occurred while creating exchanging token:", error);
   }
 };
 

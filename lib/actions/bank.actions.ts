@@ -2,7 +2,7 @@
 
 import { CountryCode } from "plaid";
 import { plaidClient } from "../plaid";
-import { parseStringify } from "../utils";
+import { generateTransactionFingerprint, parseStringify } from "../utils";
 import {
   createTransaction,
   getTransactionsByBankId,
@@ -132,12 +132,22 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
 
     // 3. Store new transactions with rich metadata
     const stored = await Promise.all(
-      plaidTransactions.map(async (t) =>
-        createTransaction({
+      plaidTransactions.map(async (t) => {
+        const merchant = t.merchant_name || t.name;
+
+        const fingerprint = generateTransactionFingerprint({
+          amount: Math.abs(t.amount),
+          date: t.date,
+          merchant,
+          userId: bank.userId,
+          senderBankId: bank.$id,
+        });
+
+        return createTransaction({
           name: t.name,
           amount: Math.abs(t.amount),
-          senderBankId: t.amount < 0 ? bank.$id : bank.$id,
-          receiverBankId: t.amount >= 0 ? bank.$id : bank.$id,
+          senderBankId: bank.$id,
+          receiverBankId: bank.$id,
           userId: bank.userId,
           type: t.amount < 0 ? "debit" : "credit",
           category: await mapPlaidCategory(
@@ -147,15 +157,15 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
           date: t.date,
           senderId: bank.userId,
           receiverId: bank.userId,
-          merchant: t.merchant_name || t.name,
+          merchant,
           logoUrl: t.image,
-          website: t.website,
           plaidTransactionId: t.id,
+          fingerprint,
         }).catch((e) => {
           console.error("Error storing transaction:", e);
           return null;
-        })
-      )
+        });
+      })
     );
 
     // 4. Fetch internal transfers with proper error handling
