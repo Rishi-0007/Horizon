@@ -358,4 +358,5 @@ declare interface FingerprintProps {
   merchant: string;
   userId: string;
   senderBankId?: string;
+  type?: "debit" | "credit";
 }

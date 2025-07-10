@@ -59,66 +59,81 @@ const PaymentTransferForm = ({ accounts }: PaymentTransferFormProps) => {
         accountId: receiverAccountId,
       });
       const senderBank = await getBank({ documentId: data.senderBank });
-      const transferParams = {
+
+      // 1) Do the Dwolla transfer
+      const transfer = await createTransfer({
         sourceFundingSourceUrl: senderBank.fundingSourceUrl,
         destinationFundingSourceUrl: receiverBank.fundingSourceUrl,
         amount: data.amount,
-      };
-      // create transfer
-      const transfer = await createTransfer(transferParams);
-      const fingerprint = generateTransactionFingerprint({
-        amount: data.amount,
-        date: new Date().toISOString(),
-        merchant: "Transfer",
-        senderBankId: senderBank.$id,
-        userId: senderBank.userId.$id,
       });
-      // create transfer transaction
-      if (transfer) {
-        const now = new Date().toISOString();
 
-        const senderTxn = await createTransaction({
-          name: data.name,
-          amount: data.amount,
-          userId: senderBank.userId,
-          date: now,
-          senderId: senderBank.userId,
-          senderBankId: senderBank.$id,
-          receiverId: receiverBank.userId,
-          receiverBankId: receiverBank.$id,
-          email: data.email,
-          fingerprint,
-          type: "debit" as const,
-          category: "Transfer",
-          channel: "Dwolla",
-        });
+      if (!transfer) throw new Error("Transfer failed");
 
-        const receiverTxn = await createTransaction({
-          name: data.name,
-          amount: data.amount,
-          userId: receiverBank.userId,
-          date: now,
-          senderId: senderBank.userId,
-          senderBankId: senderBank.$id,
-          receiverId: receiverBank.userId,
-          receiverBankId: receiverBank.$id,
-          email: data.email,
-          fingerprint,
-          type: "credit" as const,
-          category: "Transfer",
-          channel: "Dwolla",
-        });
+      const now = new Date().toISOString();
 
-        if (senderTxn && receiverTxn) {
-          form.reset();
-          router.push("/");
-        }
+      // 2) Build fingerprints
+      const senderFingerprint = generateTransactionFingerprint({
+        amount: data.amount,
+        date: now,
+        merchant: "Transfer",
+        userId: senderBank.userId,
+        senderBankId: senderBank.$id,
+        type: "debit",
+      });
+      const receiverFingerprint = generateTransactionFingerprint({
+        amount: data.amount,
+        date: now,
+        merchant: "Transfer",
+        userId: receiverBank.userId,
+        senderBankId: receiverBank.$id,
+        type: "credit",
+      });
+
+      // 3) Create the two Appwrite transactions
+
+      // — debit side (sender’s bank)
+      const senderTxn = await createTransaction({
+        name: data.name,
+        amount: data.amount,
+        userId: senderBank.userId, // <— must pass this
+        date: now,
+        senderId: senderBank.userId, // <— and this
+        senderBankId: senderBank.$id,
+        receiverId: receiverBank.userId,
+        receiverBankId: receiverBank.$id,
+        email: data.email,
+        fingerprint: senderFingerprint,
+        type: "debit",
+        category: "Transfer",
+        channel: "Dwolla",
+      });
+
+      // — credit side (receiver’s bank)
+      const receiverTxn = await createTransaction({
+        name: data.name,
+        amount: data.amount,
+        userId: receiverBank.userId, // <— and this
+        date: now,
+        senderId: senderBank.userId,
+        senderBankId: receiverBank.$id, // flipped so it shows here
+        receiverId: receiverBank.userId,
+        receiverBankId: receiverBank.$id,
+        email: data.email,
+        fingerprint: receiverFingerprint,
+        type: "credit",
+        category: "Transfer",
+        channel: "Dwolla",
+      });
+
+      if (senderTxn && receiverTxn) {
+        form.reset();
+        router.push("/");
       }
     } catch (error) {
-      console.error("Submitting create transfer request failed: ", error);
+      console.error("Submitting create transfer request failed:", error);
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   return (

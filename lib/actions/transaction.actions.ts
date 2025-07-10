@@ -89,21 +89,21 @@ export const getTransactionsByBankId = async ({
   try {
     const { database } = await createAdminClient();
 
-    // Fetch transactions where the bank was the sender
+    // ✅ Only fetch DEBIT transactions where bank was the sender
     const senderTransactionsRes = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
-      [Query.equal("senderBankId", bankId)]
+      [Query.equal("senderBankId", bankId), Query.equal("type", "debit")]
     );
 
-    // Fetch transactions where the bank was the receiver
+    // ✅ Only fetch CREDIT transactions where bank was the receiver
     const receiverTransactionsRes = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
-      [Query.equal("receiverBankId", bankId)]
+      [Query.equal("receiverBankId", bankId), Query.equal("type", "credit")]
     );
 
-    // Combine and remove duplicates based on `$id`
+    // ✅ Merge and deduplicate
     const uniqueMap = new Map();
     [
       ...senderTransactionsRes.documents,

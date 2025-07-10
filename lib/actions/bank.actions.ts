@@ -5,7 +5,6 @@ import { plaidClient } from "../plaid";
 import { generateTransactionFingerprint, parseStringify } from "../utils";
 import {
   createTransaction,
-  getTransactionsByBankId,
   getTransactionsByUserId,
 } from "./transaction.actions";
 import { getBanks, getBank } from "./user.actions";

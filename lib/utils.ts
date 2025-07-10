@@ -220,9 +220,10 @@ export function generateTransactionFingerprint({
   merchant,
   userId,
   senderBankId,
+  type,
 }: FingerprintProps) {
   const raw = `${amount}|${new Date(
     date
-  ).toISOString()}|${merchant}|${userId}|${senderBankId}`;
+  ).toISOString()}|${merchant}|${userId}|${senderBankId}|${type}`;
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
