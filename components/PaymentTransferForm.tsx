@@ -25,17 +25,12 @@ import {
 } from "./ui/form";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
+import { channel } from "diagnostics_channel";
 
 const formSchema = z.object({
   email: z.string().email("Invalid email address"),
   name: z.string().min(4, "Transfer note is too short"),
-  amount: z
-    .string()
-    .min(4, "Amount is too short")
-    .regex(
-      /^\d+(\.\d{1,2})?$/,
-      "Please enter a valid amount" + " (e.g., 10.00)"
-    ),
+  amount: z.string().min(4, "Amount is too short"),
   senderBank: z.string().min(4, "Please select a valid bank account"),
   sharableId: z.string().min(8, "Please select a valid sharable Id"),
 });
@@ -59,12 +54,11 @@ const PaymentTransferForm = ({ accounts }: PaymentTransferFormProps) => {
     setIsLoading(true);
 
     try {
-      const receiverAccountId = data.sharableId;
+      const receiverAccountId = decryptId(data.sharableId);
       const receiverBank = await getBankByAccountId({
         accountId: receiverAccountId,
       });
       const senderBank = await getBank({ documentId: data.senderBank });
-
       const transferParams = {
         sourceFundingSourceUrl: senderBank.fundingSourceUrl,
         destinationFundingSourceUrl: receiverBank.fundingSourceUrl,
@@ -75,31 +69,47 @@ const PaymentTransferForm = ({ accounts }: PaymentTransferFormProps) => {
       const fingerprint = generateTransactionFingerprint({
         amount: data.amount,
         date: new Date().toISOString(),
-        merchant: data.name || "Transfer",
-        userId: senderBank.userId.$id,
+        merchant: "Transfer",
         senderBankId: senderBank.$id,
+        userId: senderBank.userId.$id,
       });
       // create transfer transaction
       if (transfer) {
-        const transaction = {
+        const now = new Date().toISOString();
+
+        const senderTxn = await createTransaction({
           name: data.name,
           amount: data.amount,
-          userId: senderBank.userId.$id,
-          type: "debit" as const,
-          category: "Transfer",
-          channel: "dwolla",
-          date: new Date().toISOString(),
-          senderId: senderBank.userId.$id,
+          userId: senderBank.userId,
+          date: now,
+          senderId: senderBank.userId,
           senderBankId: senderBank.$id,
-          receiverId: receiverBank.userId.$id,
+          receiverId: receiverBank.userId,
           receiverBankId: receiverBank.$id,
           email: data.email,
           fingerprint,
-        };
+          type: "debit" as const,
+          category: "Transfer",
+          channel: "Dwolla",
+        });
 
-        const newTransaction = await createTransaction(transaction);
+        const receiverTxn = await createTransaction({
+          name: data.name,
+          amount: data.amount,
+          userId: receiverBank.userId,
+          date: now,
+          senderId: senderBank.userId,
+          senderBankId: senderBank.$id,
+          receiverId: receiverBank.userId,
+          receiverBankId: receiverBank.$id,
+          email: data.email,
+          fingerprint,
+          type: "credit" as const,
+          category: "Transfer",
+          channel: "Dwolla",
+        });
 
-        if (newTransaction) {
+        if (senderTxn && receiverTxn) {
           form.reset();
           router.push("/");
         }
@@ -111,17 +121,9 @@ const PaymentTransferForm = ({ accounts }: PaymentTransferFormProps) => {
     setIsLoading(false);
   };
 
-  const onError = (error: any) => {
-    console.error("Form submission error: ", error);
-    setIsLoading(false);
-  };
-
   return (
     <Form {...form}>
-      <form
-        onSubmit={form.handleSubmit(submit, onError)}
-        className="flex flex-col"
-      >
+      <form onSubmit={form.handleSubmit(submit)} className="flex flex-col">
         <FormField
           control={form.control}
           name="senderBank"

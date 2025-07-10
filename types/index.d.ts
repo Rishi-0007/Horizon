@@ -84,6 +84,7 @@ declare type Transaction = {
   senderBankId?: string;
   receiverBankId?: string;
   userId?: string;
+  fingerprint?: string;
 };
 
 declare type Bank = {

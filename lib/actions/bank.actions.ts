@@ -6,6 +6,7 @@ import { generateTransactionFingerprint, parseStringify } from "../utils";
 import {
   createTransaction,
   getTransactionsByBankId,
+  getTransactionsByUserId,
 } from "./transaction.actions";
 import { getBanks, getBank } from "./user.actions";
 
@@ -80,14 +81,14 @@ export const getAccounts = async ({ userId }: getAccountsProps) => {
 };
 
 // Get one bank account
+
 export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
   let accessToken: string | undefined;
   let errorCode: string | null = null;
   let account: any = null;
-  let allTransactions: any[] = [];
 
   try {
-    const bank = await getBank({ documentId: appwriteItemId });
+    const bank: Bank = await getBank({ documentId: appwriteItemId });
     if (!bank) throw new Error(`Bank not found: ${appwriteItemId}`);
     accessToken = bank.accessToken;
     if (!accessToken) throw new Error("No access token found for bank");
@@ -102,6 +103,7 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
     const institution = await getInstitution({
       institutionId: accountsData.item.institution_id!,
     });
+
     account = {
       id: accountData.account_id,
       availableBalance: accountData.balances.available!,
@@ -130,8 +132,8 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
       plaidTransactions = [];
     }
 
-    // 3. Store new transactions with rich metadata
-    const stored = await Promise.all(
+    // 3. Store only new transactions with fingerprint-based deduplication
+    await Promise.all(
       plaidTransactions.map(async (t) => {
         const merchant = t.merchant_name || t.name;
 
@@ -168,28 +170,13 @@ export const getAccount = async ({ appwriteItemId }: getAccountProps) => {
       })
     );
 
-    // 4. Fetch internal transfers with proper error handling
-    let transferTxns: any[] = [];
-    try {
-      const transferData = await getTransactionsByBankId({ bankId: bank.$id });
-      transferTxns =
-        transferData?.documents?.map((t: any) => ({
-          id: t.$id,
-          name: t.name || "Transfer",
-          amount: t.amount!,
-          date: t.date || t.$createdAt,
-          paymentChannel: t.channel || "transfer",
-          category: t.category || "Transfer",
-          type: t.type || (t.senderBankId === bank.$id ? "debit" : "credit"),
-        })) || [];
-    } catch (error) {
-      console.error("Error fetching transfer transactions:", error);
-      transferTxns = [];
-    }
+    // ✅ 4. Fetch all transactions from Appwrite for this user
+    const allTransactions = await getTransactionsByUserId(bank.userId);
 
-    // 5. Combine, sort
-    allTransactions = [...stored.filter(Boolean), ...transferTxns].sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    // ✅ 5. Sort transactions by date (latest first)
+    allTransactions.sort(
+      (a: { date: string }, b: { date: string }) =>
+        new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
     return parseStringify({

@@ -43,6 +43,7 @@ const PlaidLink = ({
       });
 
       // Refresh the current page to reload bank & errorCode
+      router.push("/");
       router.refresh();
     },
     [router, user]

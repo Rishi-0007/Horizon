@@ -89,64 +89,54 @@ export const getTransactionsByBankId = async ({
   try {
     const { database } = await createAdminClient();
 
-    const senderTransactions = await database.listDocuments(
+    // Fetch transactions where the bank was the sender
+    const senderTransactionsRes = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
       [Query.equal("senderBankId", bankId)]
     );
 
-    const receiverTransactions = await database.listDocuments(
+    // Fetch transactions where the bank was the receiver
+    const receiverTransactionsRes = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
       [Query.equal("receiverBankId", bankId)]
     );
 
-    const transactions = [
-      ...senderTransactions.documents,
-      ...receiverTransactions.documents,
-    ];
+    // Combine and remove duplicates based on `$id`
+    const uniqueMap = new Map();
+    [
+      ...senderTransactionsRes.documents,
+      ...receiverTransactionsRes.documents,
+    ].forEach((txn) => {
+      uniqueMap.set(txn.$id, txn);
+    });
+
+    const transactions = Array.from(uniqueMap.values()).sort(
+      (a: any, b: any) =>
+        new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
 
     return parseStringify(transactions);
   } catch (error) {
-    console.error("Error getting transactions:", error);
+    console.error("Error getting transactions by bankId:", error);
     return parseStringify({ total: 0, documents: [] });
   }
 };
 
-export const getAllUserTransactions = async ({
-  userId,
-}: {
-  userId: string;
-}) => {
+export const getTransactionsByUserId = async (userId: string) => {
   try {
     const { database } = await createAdminClient();
 
-    const senderTransactions = await database.listDocuments(
+    const response = await database.listDocuments(
       DATABASE_ID!,
       TRANSACTION_COLLECTION_ID!,
-      [Query.equal("senderId", userId)]
+      [Query.equal("userId", userId), Query.orderDesc("date"), Query.limit(100)]
     );
 
-    const receiverTransactions = await database.listDocuments(
-      DATABASE_ID!,
-      TRANSACTION_COLLECTION_ID!,
-      [Query.equal("receiverId", userId)]
-    );
-
-    const all = [
-      ...senderTransactions.documents,
-      ...receiverTransactions.documents,
-    ];
-
-    return parseStringify(
-      all.sort(
-        (a, b) =>
-          new Date((a as { date?: string }).date ?? 0).getTime() -
-          new Date((b as { date?: string }).date ?? 0).getTime()
-      )
-    );
+    return parseStringify(response.documents);
   } catch (error) {
-    console.error("Error in getAllUserTransactions:", error);
+    console.error("Error fetching transactions by userId:", error);
     return [];
   }
 };
