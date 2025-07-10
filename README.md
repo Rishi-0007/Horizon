@@ -25,12 +25,11 @@
 3. ⚡ [Features](#features)
 4. 🚀 [Getting Started](#getting-started)
 5. 📦 [Snippets](#snippets)
-6. 🎨 [Assets](#assets)
-7. 🤩 [What's Cool?](#cool)
+6. 🤩 [What's Cool?](#cool)
+7. 🎨 [Assets](#assets)
 
 
-
-## 👋 Introduction
+## <a name="introduction"> 👋 Introduction </a>
 
 Horizon is a beautifully crafted modern **Fintech SaaS platform** 🌐 that enables users to:
 
@@ -43,7 +42,7 @@ Perfect for showcasing full-stack skills to recruiters and interviewers 👨‍�
 
 
 
-## 🧰 Tech Stack
+## <a name="tech-stack">🧰 Tech Stack</a>
 
 | Tech               | Description                                         |
 | ------------------ | --------------------------------------------------- |
@@ -60,7 +59,7 @@ Perfect for showcasing full-stack skills to recruiters and interviewers 👨‍�
 
 
 
-## ⚡ Features
+## <a name="features">⚡ Features</a>
 
 * 🔐 **Secure Auth** – SSR auth with Appwrite, full session handling
 * 🏦 **Link Banks** – Connect multiple real/sandbox banks via Plaid
@@ -72,7 +71,7 @@ Perfect for showcasing full-stack skills to recruiters and interviewers 👨‍�
 
 
 
-## 🚀 Getting Started
+## <a name="getting-started">🚀 Getting Started</a>
 
 ### 📦 Prerequisites
 
@@ -1390,7 +1389,7 @@ export default PaymentTransferForm;
 </details>
 
 <details>
-<summary><code>Missing from the video (top right on the transaction list page) BankDropdown.tsx</code></summary>
+<summary><code>BankDropdown.tsx</code></summary>
 
 ```typescript
 "use client";
@@ -1597,7 +1596,7 @@ export const Category = ({ category }: CategoryProps) => {
 
 </details>
 
-## 🤩 What's Cool?
+## <a name="cool">🤩 What's Cool?</a>
 
 * 🚀 **End-to-end working flow**
 * 🔁 **Fund transfers with audit trail**
@@ -1606,7 +1605,7 @@ export const Category = ({ category }: CategoryProps) => {
 * 🧩 **Works great even with test accounts (Plaid sandbox)**
 
 ---
-## <a name="links">🔗 Links</a>
+## <a name="assets">🔗 Assets</a>
 
 Assets used in the project can be found [here](https://drive.google.com/file/d/1TVhdnD97LajGsyaiNa6sDs-ap-z1oerA/view?usp=sharing)
 
